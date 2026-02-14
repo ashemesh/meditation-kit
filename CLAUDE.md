@@ -13,7 +13,7 @@ uv sync                # Install dependencies
 python main.py         # Run the meditation audio (Ctrl+C to stop)
 ```
 
-No test suite or linting is configured.
+Requires Python 3.13+. No test suite or linting is configured.
 
 ## Architecture
 
