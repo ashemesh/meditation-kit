@@ -26,12 +26,20 @@ HRV_WINDOW_S = 60.0          # rolling window for RMSSD calculation
 HRV_MIN_INTERVALS = 5        # minimum RR intervals before showing a score
 HRV_TREND_THRESHOLD = 2.0    # ms change to count as ↑ or ↓ (else →)
 
+HRV_RELAXED_THRESHOLD = 40.0   # ms — RMSSD above this = CNS relaxed
+HRV_SYNC_BLEND = 0.3            # blend rate per 9 s cycle (~27 s to reach 1.0)
+
+LP_MIN_TIGHT = 120.0            # exhale cutoff when fully synced (darker)
+LP_MAX_TIGHT = 2000.0           # inhale cutoff when fully synced (brighter)
+
 # -----------------------------
 # HRV shared state
 # -----------------------------
 rr_buffer: list[float] = []
 hrv_lock = threading.Lock()
 _hrv_stop_event: threading.Event = threading.Event()
+
+_sync_strength: float = 0.0    # 0 = passive ambient, 1 = fully breath-locked
 
 # -----------------------------
 # Helpers
@@ -88,30 +96,28 @@ start_time = time.time()
 
 def audio_callback(outdata, frames, time_info, status):
     global phase_carrier
+    s = _sync_strength  # safe: main thread writes, audio thread reads (GIL, single float)
 
     t_now = time.time() - start_time
-    # Determine breath phase
     ph, u = breath_phase(t_now)
 
-    # Shape curve 0..1 (slow, smooth)
-    # inhale: rises 0->1, exhale: falls 1->0
+    # Expand filter range and inhale authority proportional to sync strength
+    lp_min = LP_MIN + (LP_MIN_TIGHT - LP_MIN) * s
+    lp_max = LP_MAX + (LP_MAX_TIGHT - LP_MAX) * s
+
     if ph == "inhale":
-        shape = smoothstep(u) ** 2 # slower inhale ramp
-        shape *= 0.55 # reduce inhale authority
+        authority = 0.55 + 0.45 * s        # 55% → 100%
+        shape = smoothstep(u) ** 2 * authority
     else:
         shape = 1.0 - smoothstep(u)
 
-    # Map breathing shape -> cutoff + gain
-    cutoff = LP_MIN + (LP_MAX - LP_MIN) * shape
+    cutoff = lp_min + (lp_max - lp_min) * shape
 
-    # Gain: exhale slightly more "rewarding" (tiny bias)
-    # (This tends to help vagal settling.)
-    # Keep inhale volume flat; reward only exhale slightly
     if ph == "exhale":
-         gain = MASTER_VOL * 0.80
+        gain = MASTER_VOL * (0.80 - 0.15 * s)          # 80% → 65%
     else:
-         gain = MASTER_VOL * (0.78 + 0.22 * shape)  # exhale gets the "reward"
-         gain *= 1.07
+        boost = 1.07 + 0.08 * s                         # 1.07 → 1.15
+        gain = MASTER_VOL * (0.78 + 0.22 * shape) * boost
 
     # Generate "wind": white noise -> low-pass -> gentle saturation
     noise = rng.normal(0.0, 1.0, frames).astype(np.float32)
@@ -224,7 +230,13 @@ def main():
                         arrow = "↓"
                     else:
                         arrow = "→"
-                    print(f"HRV (RMSSD): {score:.1f} ms {arrow}")
+
+                    # Blend sync strength toward target
+                    global _sync_strength
+                    target_sync = 1.0 if score >= HRV_RELAXED_THRESHOLD else 0.0
+                    _sync_strength += (target_sync - _sync_strength) * HRV_SYNC_BLEND
+
+                    print(f"HRV (RMSSD): {score:.1f} ms {arrow}  sync: {_sync_strength:.2f}")
                     prev_hrv = score
         except KeyboardInterrupt:
             pass
