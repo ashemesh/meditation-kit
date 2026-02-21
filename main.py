@@ -171,7 +171,7 @@ async def hrv_run():
     """Scan for a BLE Heart Rate device, connect, and stream notifications."""
     print("[HRV] Scanning for heart rate device...")
     device = await BleakScanner.find_device_by_filter(
-        lambda d, _: "0000180d-0000-1000-8000-00805f9b34fb" in (d.metadata.get("uuids") or [])
+        lambda d, ad: "0000180d-0000-1000-8000-00805f9b34fb" in (ad.service_uuids or [])
             or (d.name is not None and "heart" in d.name.lower()),
         timeout=10.0,
     )
