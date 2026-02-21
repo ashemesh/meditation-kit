@@ -158,7 +158,7 @@ def calc_rmssd(rr_ms: list[float]) -> float | None:
 
 def hrv_notification_handler(_, data: bytearray):
     """Called by bleak on each heart rate notification (on asyncio thread)."""
-    new_rr = parse_rr_intervals(data)
+    new_rr = [rr for rr in parse_rr_intervals(data) if 273 <= rr <= 2000]
     if not new_rr:
         return
     with hrv_lock:
@@ -178,9 +178,10 @@ async def hrv_run():
     if device is None:
         print("[HRV] No heart rate device found. HRV monitoring disabled.")
         return
-    print(f"[HRV] Connected to {device.name}")
+    print(f"[HRV] Found {device.name}")
     HR_CHAR_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
     async with BleakClient(device) as client:
+        print(f"[HRV] Connected to {device.name}")
         await client.start_notify(HR_CHAR_UUID, hrv_notification_handler)
         while not _hrv_stop_event.is_set():
             await asyncio.sleep(0.5)
